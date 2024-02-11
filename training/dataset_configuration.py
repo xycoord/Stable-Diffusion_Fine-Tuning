@@ -25,15 +25,10 @@ def prepare_dataset(data_name,
     dataset_config_dict = dict()
     
     if data_name == 'sceneflow':
-        train_transform_list = [
-                        transforms.ToTensor(),
-                        # transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
-                        ]
+        train_transform_list = [transforms.ToTensor(),]
         train_transform = transforms.Compose(train_transform_list)
 
-        val_transform_list = [transforms.ToTensor(),
-                        # transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD)
-                        ]
+        val_transform_list = [transforms.ToTensor(),]
         val_transform = transforms.Compose(val_transform_list)
         
         train_dataset = StereoDataset(data_dir=datapath,train_datalist=trainlist,test_datalist=vallist,

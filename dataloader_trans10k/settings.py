@@ -22,7 +22,7 @@ cfg.DATASET.STD = [0.5, 0.5, 0.5]
 # dataset ignore index
 cfg.DATASET.IGNORE_INDEX = -1
 # workers
-cfg.DATASET.WORKERS = 8
+cfg.DATASET.WORKERS = 4
 # val dataset mode
 cfg.DATASET.MODE = 'testval'
 ########################### data augment ######################################

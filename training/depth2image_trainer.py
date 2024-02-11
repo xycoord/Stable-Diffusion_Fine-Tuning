@@ -40,7 +40,7 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from transformers.utils import ContextManagers
 import accelerate
 
-from training.dataset_configuration import prepare_dataset,Disparity_Normalization,resize_max_res_tensor
+from dataset_configuration import prepare_dataset,Disparity_Normalization,resize_max_res_tensor
 
 from args_parsing import parse_args
 from log_val import log_validation

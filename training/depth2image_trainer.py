@@ -217,14 +217,17 @@ def main():
         weight_decay=args.adam_weight_decay,
         eps=args.adam_epsilon,
     )
+
+    # Create Dataloaders
     with accelerator.main_process_first():
-        (train_loader,test_loader), dataset_config_dict = prepare_dataset(data_name=args.dataset_name,
-                                                                      datapath=args.dataset_path,
-                                                                      trainlist=args.trainlist,
-                                                                      vallist=args.vallist,batch_size=args.train_batch_size,
-                                                                      test_batch=1,
-                                                                      datathread=args.dataloader_num_workers,
-                                                                      logger=logger)
+        (train_loader,test_loader), dataset_config_dict = prepare_dataset(
+            data_name=args.dataset_name,
+            datapath=args.dataset_path,
+            trainlist=args.trainlist,
+            vallist=args.vallist,batch_size=args.train_batch_size,
+            test_batch=1,
+            datathread=args.dataloader_num_workers,
+            logger=logger)
 
     # because the optimizer not optimized every time, so we need to calculate how many steps it optimizes,
     # it is usually optimized by 

@@ -80,6 +80,10 @@ class TransSegmentation(SegmentationDataset):
     def __len__(self):
         return len(self.images)
 
+    def get_img_size(self):
+        return 512, 512
+
+
     @property
     def pred_offset(self):
         return 0
@@ -88,7 +92,7 @@ class TransSegmentation(SegmentationDataset):
     def classes(self):
         """Category names."""
         return ('background', 'things', 'stuff')
-
+    
 
 def _get_trans10k_pairs(folder, split='train'):
 

@@ -221,7 +221,7 @@ def main():
         eps=args.adam_epsilon,
     )
 
-    # Create Dataloaders
+    # ========= Setup Dataloaders ===========
     with accelerator.main_process_first():
         (train_loader,test_loader), dataset_config_dict = prepare_dataset(
             data_name=args.dataset_name,
@@ -360,12 +360,13 @@ def main():
         for step, batch in enumerate(train_loader):
             with accelerator.accumulate(unet):
                 # convert the images and the depths into lantent space.
-                left_image_data = batch['img_left']
-                left_disparity = batch['gt_disp']
+                left_image_data = batch[0]
+                left_disparity = batch[1]
                 
                 # disparity is only a single channel so copy it across 3
                 left_disp_single = left_disparity.unsqueeze(0)
                 left_disparity_stacked = left_disp_single.repeat(1,3,1,1) # dim 0 is batch?
+                left_disparity_stacked = left_disparity_stacked.float()
 
                 left_image_data_resized = resize_max_res_tensor(left_image_data,is_disp=False) #range in (0-1)
                 left_disparity_resized = resize_max_res_tensor(left_disparity_stacked,is_disp=True) # not range

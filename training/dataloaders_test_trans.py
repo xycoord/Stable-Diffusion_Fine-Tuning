@@ -18,7 +18,7 @@ from dataloader_trans10k.distributed import *
 # image transform
 input_transform = transforms.Compose([
     transforms.ToTensor(),
-    transforms.Normalize(cfg.DATASET.MEAN, cfg.DATASET.STD),
+    # transforms.Normalize(cfg.DATASET.MEAN, cfg.DATASET.STD),
 ])
 # dataset and dataloader
 data_kwargs = {'transform': input_transform, 'base_size': cfg.TRAIN.BASE_SIZE,
@@ -31,10 +31,10 @@ max_iters = cfg.TRAIN.EPOCHS * iters_per_epoch
 train_sampler = make_data_sampler(train_dataset, shuffle=True, distributed=False)
 train_batch_sampler = make_batch_data_sampler(train_sampler, cfg.TRAIN.BATCH_SIZE, max_iters, drop_last=True)
 
-train_loader = data.DataLoader(dataset=train_dataset,
-                                    batch_sampler=train_batch_sampler,
-                                    num_workers=cfg.DATASET.WORKERS,
-                                    pin_memory=True)
+train_loader = data.DataLoader( dataset=train_dataset,
+                                batch_sampler=train_batch_sampler,
+                                num_workers=cfg.DATASET.WORKERS,
+                                pin_memory=True)
 
 print("num batches", len(train_loader))
 

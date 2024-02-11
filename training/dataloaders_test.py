@@ -13,7 +13,7 @@ dataset_path='/mnt/disks/data1'
 trainlist='../datafiles/sceneflow/SceneFlow_With_Occ.list'
 vallist='../datafiles/sceneflow/FlyingThings3D_Test_With_Occ.list'
 output_dir='../outputs/sceneflow_fine_tune_hardest'
-train_batch_size=2
+train_batch_size=1
 num_train_epochs=10
 gradient_accumulation_steps=8
 learning_rate=1e-5
@@ -52,8 +52,8 @@ for step, batch in enumerate(train_loader):
     disp_single = disparity.unsqueeze(0)
     disparity_stacked = disp_single.repeat(1,3,1,1) # dim 0 is batch?
 
-    print("image type:", image.dtype) # [-1,1]
-    print("mask type:", disparity.dtype)    # [0,1]
+    print("image type:", image.shape) # [-1,1]
+    print("mask type:", disparity_stacked.shape)    # [0,1]
 
     image_resized = resize_max_res_tensor(image,is_disp=False) #range in (0-1)
     disparity_resized = resize_max_res_tensor(disparity_stacked,is_disp=True) # not range

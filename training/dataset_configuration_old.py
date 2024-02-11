@@ -10,13 +10,6 @@ from torch.utils.data import DataLoader
 from dataloader import transforms
 import os
 
-from torchvision import transforms
-import torch.utils.data as data
-
-from dataloader_trans10k import get_segmentation_dataset
-from dataloader_trans10k.settings import cfg
-from dataloader_trans10k.distributed import *
-
 
 # Get Dataset Here
 def prepare_dataset(data_name,
@@ -42,23 +35,6 @@ def prepare_dataset(data_name,
                                 dataset_name='SceneFlow',mode='train',transform=train_transform)
         test_dataset = StereoDataset(data_dir=datapath,train_datalist=trainlist,test_datalist=vallist,
                                 dataset_name='SceneFlow',mode='val',transform=val_transform)
-
-    elif data_name == 'trans10k':
-        train_transform_list = [transforms.ToTensor(),]
-        train_transform = transforms.Compose(train_transform_list)
-
-        val_transform_list = [transforms.ToTensor(),]
-        val_transform = transforms.Compose(val_transform_list)
-        
-        train_kwargs = {'transform': train_transform, 'base_size': cfg.TRAIN.BASE_SIZE,
-                'crop_size': cfg.TRAIN.CROP_SIZE}
-        train_dataset = get_segmentation_dataset(cfg.DATASET.NAME, split='train', mode='train', **train_kwargs)
-
-        test_kwargs = {'transform': val_transform, 'base_size': cfg.TRAIN.BASE_SIZE,
-                'crop_size': cfg.TRAIN.CROP_SIZE}
-        test_dataset = get_segmentation_dataset(cfg.DATASET.NAME, split='validation', mode='val', **test_kwargs)
-
-
 
     img_height, img_width = train_dataset.get_img_size()
 

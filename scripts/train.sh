@@ -5,7 +5,7 @@ cd ..
 cd training
 pretrained_model_name_or_path='stabilityai/stable-diffusion-2'
 root_path='/mnt/disks/data1'
-dataset_name='sceneflow'
+dataset_name='trans10k'
 trainlist='../datafiles/sceneflow/SceneFlow_With_Occ.list'
 vallist='../datafiles/sceneflow/FlyingThings3D_Test_With_Occ.list'
 output_dir='../outputs/sceneflow_fine_tune_hardest'

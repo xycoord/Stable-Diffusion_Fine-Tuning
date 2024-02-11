@@ -1,5 +1,4 @@
 import math
-# import random
 
 import torch
 import torch.nn as nn
@@ -20,7 +19,6 @@ from accelerate.state import AcceleratorState
 from accelerate.utils import ProjectConfiguration, set_seed
 import shutil
 
-
 import diffusers
 from diffusers import (
     DiffusionPipeline,
@@ -35,7 +33,6 @@ from diffusers.utils import check_min_version, deprecate, is_wandb_available, ma
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import is_compiled_module
 
-
 from packaging import version
 from torchvision import transforms
 from tqdm.auto import tqdm
@@ -43,13 +40,14 @@ from transformers import CLIPTextModel, CLIPTokenizer
 from transformers.utils import ContextManagers
 import accelerate
 
-import sys
-sys.path.append("..")
 from training.dataset_configuration import prepare_dataset,Disparity_Normalization,resize_max_res_tensor
 
 from args_parsing import parse_args
 from log_val import log_validation
 
+import sys
+
+sys.path.append("..")
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.26.0.dev0")
@@ -82,6 +80,7 @@ def main():
         level=logging.INFO,
     )
     logger.info(accelerator.state, main_process_only=True) # only the main process show the logs
+
     # set the warning levels
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
@@ -116,33 +115,37 @@ def main():
 
         return [deepspeed_plugin.zero3_init_context_manager(enable=False)]
 
+    # Load Stable Diffusion 2
     with ContextManagers(deepspeed_zero_init_disabled_context_manager()):
-        vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path,
-                                            subfolder='vae')
-        text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path,
-                                                     subfolder='text_encoder')
-        
-        unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path,subfolder="unet",
-                                                    in_channels=8, sample_size=96,
-                                                    low_cpu_mem_usage=False,
-                                                    ignore_mismatched_sizes=True)
+        vae = AutoencoderKL.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder='vae')
+        text_encoder = CLIPTextModel.from_pretrained(
+            args.pretrained_model_name_or_path,
+            subfolder='text_encoder')
+        unet = UNet2DConditionModel.from_pretrained(
+            args.pretrained_model_name_or_path,subfolder="unet",
+            in_channels=8, sample_size=96,
+            low_cpu_mem_usage=False,
+            ignore_mismatched_sizes=True)
 
     # Freeze vae and text_encoder and set unet to trainable.
     vae.requires_grad_(False)
     text_encoder.requires_grad_(False)
     unet.train() # only make the unet-trainable
     
-    # using EMA
+    # using EMA (Exponential Moving Average)
     if args.use_ema:
-        ema_unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path,subfolder="unet",
-                                                    in_channels=8, sample_size=96,
-                                                    low_cpu_mem_usage=False,
-                                                    ignore_mismatched_sizes=True)
+        ema_unet = UNet2DConditionModel.from_pretrained(
+            args.pretrained_model_name_or_path,subfolder="unet",
+            in_channels=8, sample_size=96,
+            low_cpu_mem_usage=False,
+            ignore_mismatched_sizes=True)
         ema_unet = EMAModel(ema_unet.parameters(), model_cls=UNet2DConditionModel, model_config=ema_unet.config)
         
 
     # using xformers for efficient attentions.
-    if args.enable_xformers_memory_efficient_attention:
+    if args.enable_xformers_memory_efficient_attention: # False due to enviroment conflicts :(
         if is_xformers_available():
             import xformers
             xformers_version = version.parse(xformers.__version__)
@@ -186,7 +189,7 @@ def main():
         accelerator.register_load_state_pre_hook(load_model_hook)
 
 
-    # using checkpint  for saving the memories
+    # using checkpoint for saving the memories
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
 
@@ -196,7 +199,7 @@ def main():
             args.learning_rate * args.gradient_accumulation_steps * args.train_batch_size * accelerator.num_processes
         )
 
-    # Initialize the optimizer
+    # ==== Initialize the optimizer ====
     if args.use_8bit_adam:
         try:
             import bitsandbytes as bnb
@@ -218,16 +221,17 @@ def main():
         eps=args.adam_epsilon,
     )
     with accelerator.main_process_first():
-        (train_loader,test_loader), dataset_config_dict = prepare_dataset(data_name=args.dataset_name,
-                                                                      datapath=args.dataset_path,
-                                                                      trainlist=args.trainlist,
-                                                                      vallist=args.vallist,batch_size=args.train_batch_size,
-                                                                      test_batch=1,
-                                                                      datathread=args.dataloader_num_workers,
-                                                                      logger=logger)
+        (train_loader,test_loader), dataset_config_dict = prepare_dataset(
+            data_name=args.dataset_name,
+            datapath=args.dataset_path,
+            trainlist=args.trainlist,
+            vallist=args.vallist,batch_size=args.train_batch_size,
+            test_batch=1,
+            datathread=args.dataloader_num_workers,
+            logger=logger)
 
-    # because the optimizer not optimized every time, so we need to calculate how many steps it optimizes,
-    # it is usually optimized by 
+    # because the optimizer not optimized every time, so we need to calculate 
+    # how many steps it optimizes, it is usually optimized by 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
     num_update_steps_per_epoch = math.ceil(len(train_loader) / args.gradient_accumulation_steps)
@@ -347,7 +351,7 @@ def main():
     
     
     
-    # using the epochs to training the model
+    # =================== Training Loop ===================
     for epoch in range(first_epoch, args.num_train_epochs):
         unet.train() 
         train_loss = 0.0

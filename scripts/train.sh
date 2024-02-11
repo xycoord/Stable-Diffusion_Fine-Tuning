@@ -4,10 +4,10 @@ LAUNCH_TRAINING(){
 cd .. 
 cd training
 pretrained_model_name_or_path='stabilityai/stable-diffusion-2'
-root_path='/data1/liu'
+root_path='/mnt/disks/data1'
 dataset_name='sceneflow'
-trainlist='/home/zliu/Desktop/ECCV2024/code/Diffusion/sf_double_check/Accelerator-Simple-Template/datafiles/sceneflow/SceneFlow_With_Occ.list'
-vallist='/home/zliu/ECCV2024/Accelerator-Simple-Template/datafiles/sceneflow/FlyingThings3D_Test_With_Occ.list'
+trainlist='../datafiles/sceneflow/SceneFlow_With_Occ.list'
+vallist='../datafiles/sceneflow/FlyingThings3D_Test_With_Occ.list'
 output_dir='../outputs/sceneflow_fine_tune_hardest'
 train_batch_size=1
 num_train_epochs=10
@@ -16,7 +16,7 @@ learning_rate=1e-5
 lr_warmup_steps=0
 dataloader_num_workers=4
 tracker_project_name='sceneflow_pretrain_tracker_hardest'
-
+checkpointing_steps=1000
 
 CUDA_VISIBLE_DEVICES=0,1 accelerate launch --mixed_precision="fp16"  --multi_gpu depth2image_trainer.py \
                   --pretrained_model_name_or_path $pretrained_model_name_or_path \
@@ -32,7 +32,8 @@ CUDA_VISIBLE_DEVICES=0,1 accelerate launch --mixed_precision="fp16"  --multi_gpu
                   --dataloader_num_workers $dataloader_num_workers \
                   --tracker_project_name $tracker_project_name \
                   --gradient_checkpointing \
-                  --enable_xformers_memory_efficient_attention \
+                  --checkpointing_steps $checkpointing_steps \
+                #   --enable_xformers_memory_efficient_attention \
 
 }
 

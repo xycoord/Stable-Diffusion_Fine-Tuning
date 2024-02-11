@@ -117,9 +117,9 @@ def resize_max_res_tensor(input_tensor,is_disp=False,recom_resolution=768):
 if __name__=="__main__":
     
 
-    datapath = "/data1/liu/"
-    trainlist = "/home/zliu/ECCV2024/Accelerator-Simple-Template/datafiles/sceneflow/SceneFlow_With_Occ.list"
-    vallist = "/home/zliu/ECCV2024/Accelerator-Simple-Template/datafiles/sceneflow/FlyingThings3D_Test_With_Occ.list"
+    datapath = "/mnt/disks/data1"
+    trainlist = "../datafiles/sceneflow/SceneFlow_With_Occ.list"
+    vallist = "../datafiles/sceneflow/FlyingThings3D_Test_With_Occ.list"
     
     
     (train_loader,test_loader), dataset_config_dict = prepare_dataset(data_name='sceneflow',

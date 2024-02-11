@@ -1,5 +1,5 @@
 inference_single_image(){
-input_rgb_path="/home/zliu/ECCV2024/Accelerator-Simple-Template/data_sample/kitti3d_000025.png"
+input_rgb_path="../data_sample/kitti3d_000025.png"
 output_dir="outputs"
 pretrained_model_path="Bingxin/Marigold" # your checkpoint here
 ensemble_size=10

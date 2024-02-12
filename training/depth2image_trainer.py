@@ -54,7 +54,31 @@ check_min_version("0.26.0.dev0")
 
 logger = get_logger(__name__, log_level="INFO")
 
+def save_checkpoint(accelerator, args, logger, global_step):
+        if accelerator.is_main_process:
+            # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
+            if args.checkpoints_total_limit is not None:
+                checkpoints = os.listdir(args.output_dir)
+                checkpoints = [d for d in checkpoints if d.startswith("checkpoint")]
+                checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
+                            
+                # before we save the new checkpoint, we need to have at _most_ `checkpoints_total_limit - 1` checkpoints
+                if len(checkpoints) >= args.checkpoints_total_limit:
+                    num_to_remove = len(checkpoints) - args.checkpoints_total_limit + 1
+                    removing_checkpoints = checkpoints[0:num_to_remove]
 
+                    logger.info(
+                        f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
+                    )
+                    logger.info(f"removing checkpoints: {', '.join(removing_checkpoints)}")
+
+                    for removing_checkpoint in removing_checkpoints:
+                        removing_checkpoint = os.path.join(args.output_dir, removing_checkpoint)
+                        shutil.rmtree(removing_checkpoint)
+
+            save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
+            accelerator.save_state(save_path)
+            logger.info(f"Saved state to {save_path}")
 
 def main():
     
@@ -359,49 +383,58 @@ def main():
         train_loss = 0.0
         for step, batch in enumerate(train_loader):
             with accelerator.accumulate(unet):
-                # convert the images and the depths into lantent space.
-                left_image_data = batch[0]
-                left_disparity = batch[1]
-                
-                # disparity is only a single channel so copy it across 3
-                left_disp_single = left_disparity.unsqueeze(0)
-                left_disparity_stacked = left_disp_single.repeat(1,3,1,1) # dim 0 is batch?
-                left_disparity_stacked = left_disparity_stacked.float()
 
-                left_image_data_resized = resize_max_res_tensor(left_image_data,is_disp=False) #range in (0-1)
-                left_disparity_resized = resize_max_res_tensor(left_disparity_stacked,is_disp=True) # not range
+                # load image and mask 
+                image_data = batch[0]
+                mask = batch[1]
 
-                # depth normalization: [([1, 3, 432, 768])]
-                left_disparity_resized_normalized = Disparity_Normalization(left_disparity_resized)
+
+                # ==== resize/shape data for stable diffusion standards ====
+                # mask is only a single channel so copy it across 3
+                mask_single = mask.unsqueeze(0)
+                mask_stacked = mask_single.repeat(1,3,1,1) # dim 0 is batch?
+                mask_stacked = mask_stacked.float() # the dataset has it as a float
+
+                image_data_resized = resize_max_res_tensor(image_data,is_disp=False) #range in (0-1)
+                mask_resized = resize_max_res_tensor(mask_stacked,is_disp=True) # not range
+
+                # mask normalization: [([1, 3, 432, 768])]
+                mask_resized_normalized = Disparity_Normalization(mask_resized)
                 
-                # ==== convert images and the disparity into latent space. ====
+
+                # ==== convert images and masks into latent space. ====
+                # TODO: refactor to function?
                 
                 # encode RGB to lantents
-                h_rgb = vae.encoder(left_image_data_resized.to(weight_dtype))
+                h_rgb = vae.encoder(image_data_resized.to(weight_dtype))
                 moments_rgb = vae.quant_conv(h_rgb)
                 mean_rgb, logvar_rgb = torch.chunk(moments_rgb, 2, dim=1)
-                rgb_latents = mean_rgb *rgb_latent_scale_factor    #torch.Size([1, 4, 54, 96])
+                rgb_latents = mean_rgb * rgb_latent_scale_factor    #torch.Size([1, 4, 54, 96])
                 
-                # encode disparity to lantents
-                h_disp = vae.encoder(left_disparity_resized_normalized.to(weight_dtype))
-                moments_disp = vae.quant_conv(h_disp)
-                mean_disp, logvar_disp = torch.chunk(moments_disp, 2, dim=1)
-                disp_latents = mean_disp * depth_latent_scale_factor
+                # encode masks to lantents
+                h_mask = vae.encoder(mask_resized_normalized.to(weight_dtype))
+                moments_mask = vae.quant_conv(h_mask)
+                mean_mask, logvar_mask = torch.chunk(moments_mask, 2, dim=1)
+                mask_latents = mean_mask * depth_latent_scale_factor
+
                 
+                # ==== Add noise for diffusion ====
+
                 # Sample noise that we'll add to the latents
-                noise = torch.randn_like(disp_latents) # create noise
+                noise = torch.randn_like(mask_latents) # create noise
                 # here is the setting batch size, in our settings, it can be 1.0
-                bsz = disp_latents.shape[0]
+                bsz = mask_latents.shape[0]
 
                 # in the Stable Diffusion, the iterations numbers is 1000 for adding the noise and denosing.
                 # Sample a random timestep for each image
-                timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=disp_latents.device)
+                timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=mask_latents.device)
                 timesteps = timesteps.long()
                 
                 # add noise to the depth lantents
-                noisy_disp_latents = noise_scheduler.add_noise(disp_latents, noise, timesteps)
+                noisy_mask_latents = noise_scheduler.add_noise(mask_latents, noise, timesteps)
+
                 
-                # === Encode text embedding for empty prompt ===
+                # ==== Encode text embedding for empty prompt ====
                 prompt = ""
                 text_inputs =tokenizer(
                     prompt,
@@ -411,31 +444,31 @@ def main():
                     return_tensors="pt",
                 )
                 text_input_ids = text_inputs.input_ids.to(text_encoder.device) #[1,2]
-                # print(text_input_ids.shape)
                 empty_text_embed = text_encoder(text_input_ids)[0].to(weight_dtype)
 
 
-                # Get the target for loss depending on the prediction type
+                # ==== Get the target for loss depending on the prediction type ====
                 if args.prediction_type is not None:
                     # set prediction_type of scheduler if defined
                     noise_scheduler.register_to_config(prediction_type=args.prediction_type)
                 if noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
                 elif noise_scheduler.config.prediction_type == "v_prediction":
-                    target = noise_scheduler.get_velocity(disp_latents, noise, timesteps)
+                    target = noise_scheduler.get_velocity(mask_latents, noise, timesteps)
                 else:
                     raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
                 
-                batch_empty_text_embed = empty_text_embed.repeat((noisy_disp_latents.shape[0], 1, 1))  # [B, 2, 1024]
+                batch_empty_text_embed = empty_text_embed.repeat((noisy_mask_latents.shape[0], 1, 1))  # [B, 2, 1024]
                 
-                # predict the noise residual and compute the loss.
-                # This is the concatenation of rgb and disp latents
-                unet_input = torch.cat([rgb_latents,noisy_disp_latents], dim=1)  # this order is important: [1,8,H,W]
+
+                # ==== Predict the noise residual and compute the loss. ====
+                # This is the concatenation of rgb and mask latents
+                unet_input = torch.cat([rgb_latents, noisy_mask_latents], dim=1)  # this order is important: [1,8,H,W]
                 
                 # predict the noise residual
-                noise_pred = unet(unet_input, 
-                                  timesteps, 
-                                  encoder_hidden_states=batch_empty_text_embed).sample  # [B, 4, h, w]
+                noise_pred = unet(unet_input, timesteps, 
+                                  encoder_hidden_states=batch_empty_text_embed
+                                 ).sample  # [B, 4, h, w]
                 
                 # loss functions
                 loss = F.mse_loss(noise_pred.float(), target.float(), reduction="mean")
@@ -445,7 +478,7 @@ def main():
                 train_loss += avg_loss.item() / args.gradient_accumulation_steps
                 
                 
-                # Backpropagate
+                # ==== Backpropagate ====
                 accelerator.backward(loss)
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(unet.parameters(), args.max_grad_norm)
@@ -457,39 +490,19 @@ def main():
 
             # currently the EMA is not used.
             if accelerator.sync_gradients:
+
                 if args.use_ema:
                     ema_unet.step(unet.parameters())
+
+                # ==== Update Progress ====
                 progress_bar.update(1)
                 global_step += 1
                 accelerator.log({"train_loss": train_loss}, step=global_step)
                 train_loss = 0.0
                 
-                # saving the checkpoints
+                # ==== Saving the checkpoints ====
                 if global_step % args.checkpointing_steps == 0:
-                    if accelerator.is_main_process:
-                        # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
-                        if args.checkpoints_total_limit is not None:
-                            checkpoints = os.listdir(args.output_dir)
-                            checkpoints = [d for d in checkpoints if d.startswith("checkpoint")]
-                            checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
-                            
-                            # before we save the new checkpoint, we need to have at _most_ `checkpoints_total_limit - 1` checkpoints
-                            if len(checkpoints) >= args.checkpoints_total_limit:
-                                num_to_remove = len(checkpoints) - args.checkpoints_total_limit + 1
-                                removing_checkpoints = checkpoints[0:num_to_remove]
-
-                                logger.info(
-                                    f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
-                                )
-                                logger.info(f"removing checkpoints: {', '.join(removing_checkpoints)}")
-
-                                for removing_checkpoint in removing_checkpoints:
-                                    removing_checkpoint = os.path.join(args.output_dir, removing_checkpoint)
-                                    shutil.rmtree(removing_checkpoint)
-
-                        save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
-                        accelerator.save_state(save_path)
-                        logger.info(f"Saved state to {save_path}")
+                    save_checkpoint(accelerator, args, logger, global_step)
 
             logs = {"step_loss": loss.detach().item(), "lr": lr_scheduler.get_last_lr()[0]}
             progress_bar.set_postfix(**logs)

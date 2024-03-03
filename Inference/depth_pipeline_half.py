@@ -69,6 +69,7 @@ class DepthEstimationPipeline(DiffusionPipeline):
     @torch.no_grad()
     def __call__(self,
                  input_image:Image,
+                 input_image_tensor: torch.Tensor = None,
                  denosing_steps: int =10,
                  ensemble_size: int =10,
                  processing_res: int = 768,
@@ -81,35 +82,41 @@ class DepthEstimationPipeline(DiffusionPipeline):
         
         # inherit from thea Diffusion Pipeline
         device = self.device
-        input_size = input_image.size
-        
-        # adjust the input resolution.
-        if not match_input_res:
-            assert (
-                processing_res is not None                
-            )," Value Error: `resize_output_back` is only valid with "
-        
-        assert processing_res >=0
-        assert denosing_steps >=1
-        assert ensemble_size >=1
-        
-        # --------------- Image Processing ------------------------
-        # Resize image
-        if processing_res >0:
-            input_image = resize_max_res(
-                input_image, max_edge_resolution=processing_res
-            ) # resize image: for kitti is 231, 768
-        
-        
-        # Convert the image to RGB, to 1. reomve the alpha channel.
-        input_image = input_image.convert("RGB")
-        image = np.array(input_image)
-        
 
-        # Normalize RGB Values.
-        rgb = np.transpose(image,(2,0,1))
-        rgb_norm = rgb / 255.0
-        rgb_norm = torch.from_numpy(rgb_norm).to(self.dtype)
+        if(input_image_tensor is None):
+            input_size = input_image.size
+            
+            # adjust the input resolution.
+            if not match_input_res:
+                assert (
+                    processing_res is not None                
+                )," Value Error: `resize_output_back` is only valid with "
+            
+            assert processing_res >=0
+            assert denosing_steps >=1
+            assert ensemble_size >=1
+            
+            # --------------- Image Processing ------------------------
+            # Resize image
+            if processing_res >0:
+                input_image = resize_max_res(
+                    input_image, max_edge_resolution=processing_res
+                ) # resize image: for kitti is 231, 768
+            
+            
+            # Convert the image to RGB, to 1. reomve the alpha channel.
+            input_image = input_image.convert("RGB")
+            image = np.array(input_image)
+            
+
+            # Normalize RGB Values.
+            rgb = np.transpose(image,(2,0,1))
+            rgb_norm = rgb / 255.0
+            rgb_norm = torch.from_numpy(rgb_norm).to(self.dtype)
+        else:
+            input_size = (input_image_tensor.shape[1],input_image_tensor.shape[2])
+            rgb_norm = input_image_tensor
+
         rgb_norm = rgb_norm.to(device)
         
         rgb_norm = rgb_norm.half()
@@ -179,13 +186,6 @@ class DepthEstimationPipeline(DiffusionPipeline):
         # Clip output range: current size is the original size
         depth_pred = depth_pred.clip(0, 1)
         
-        # colorization using the KITTI Color Plan.
-        depth_pred_vis = depth_pred * 70
-        disp_vis = 400/(depth_pred_vis+1e-3)
-        disp_vis = disp_vis.clip(0,500)
-        
-        depth_color_pred =  kitti_colormap(disp_vis)
-    
         # Colorize
         depth_colored = colorize_depth_maps(
             depth_pred, 0, 1, cmap=color_map

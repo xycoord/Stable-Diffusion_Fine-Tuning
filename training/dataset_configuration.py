@@ -50,14 +50,20 @@ def prepare_dataset(data_name,
         val_transform_list = [transforms.ToTensor(),]
         val_transform = transforms.Compose(val_transform_list)
         
-        train_kwargs = {'transform': train_transform, 'base_size': cfg.TRAIN.BASE_SIZE,
-                'crop_size': cfg.TRAIN.CROP_SIZE}
+        train_kwargs = {'transform': train_transform, 
+                        'base_size': cfg.TRAIN.BASE_SIZE,
+                        'crop_size': cfg.TRAIN.CROP_SIZE}
         train_dataset = get_segmentation_dataset(cfg.DATASET.NAME, split='train', mode='train', **train_kwargs)
 
-        test_kwargs = {'transform': val_transform, 'base_size': cfg.TRAIN.BASE_SIZE,
-                'crop_size': cfg.TRAIN.CROP_SIZE}
-        test_dataset = get_segmentation_dataset(cfg.DATASET.NAME, split='validation', mode='val', **test_kwargs)
+        val_kwargs = {'transform': train_transform, 
+                      'base_size': cfg.TRAIN.BASE_SIZE,
+                      'crop_size': cfg.TRAIN.CROP_SIZE}
+        val_dataset = get_segmentation_dataset(cfg.DATASET.NAME, split='validation', mode='val', **train_kwargs)
 
+        test_kwargs = {'transform': val_transform, 
+                       'base_size': cfg.TRAIN.BASE_SIZE,
+                       'crop_size': cfg.TRAIN.CROP_SIZE}
+        test_dataset = get_segmentation_dataset(cfg.DATASET.NAME, split='test', mode='testval', **test_kwargs)
 
 
     img_height, img_width = train_dataset.get_img_size()
@@ -74,18 +80,21 @@ def prepare_dataset(data_name,
                             shuffle = True, num_workers = datathread, \
                             pin_memory = True)
 
+    val_loader = DataLoader(val_dataset, batch_size = batch_size, \
+                            shuffle = True, num_workers = datathread, \
+                            pin_memory = True)
+
     test_loader = DataLoader(test_dataset, batch_size = test_batch, \
                             shuffle = False, num_workers = datathread, \
                             pin_memory = True)
     
     num_batches_per_epoch = len(train_loader)
     
-    
     dataset_config_dict['num_batches_per_epoch'] = num_batches_per_epoch
     dataset_config_dict['img_size'] = (img_height,img_width)
     
     
-    return (train_loader,test_loader),dataset_config_dict
+    return (train_loader, val_loader, test_loader),dataset_config_dict
 
 def Disparity_Normalization(disparity):
     min_value = torch.min(disparity)

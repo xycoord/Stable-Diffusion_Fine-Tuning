@@ -1,7 +1,7 @@
 import matplotlib.pyplot as plt
 import torch
 
-from dataset_configuration import prepare_dataset,Disparity_Normalization,resize_max_res_tensor
+from dataset_configuration import Disparity_Normalization,resize_max_res_tensor
 
 # ======== Trans10k Loader ========
 
@@ -45,6 +45,9 @@ for (image,masks,filename) in train_loader:
 
     print("image range:", torch.min(image), torch.max(image)) # [-1,1]
     print("mask range:", torch.min(masks), torch.max(masks))    # [0,1]
+    print("mask values:", torch.unique(masks))    # [0,1,2]
+    new_masks = torch.clamp(input=masks, min=0, max=1)
+    print("new mask values:", torch.unique(new_masks))    # [0,1]
 
     # disparity is only a single channel so copy it across 3
     mask_single = masks.unsqueeze(0)

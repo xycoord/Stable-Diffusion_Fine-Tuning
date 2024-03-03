@@ -8,15 +8,17 @@ root_path='/mnt/disks/data1'
 dataset_name='trans10k'
 trainlist='../datafiles/sceneflow/SceneFlow_With_Occ.list'
 vallist='../datafiles/sceneflow/FlyingThings3D_Test_With_Occ.list'
-output_dir='../outputs/sceneflow_fine_tune_hardest'
-train_batch_size=1
-num_train_epochs=10
+output_dir='../outputs/'
+train_batch_size=4
+num_train_epochs=18
 gradient_accumulation_steps=8
-learning_rate=1e-5
+learning_rate=3e-5
 lr_warmup_steps=0
 dataloader_num_workers=4
-tracker_project_name='sceneflow_pretrain_tracker_hardest'
-checkpointing_steps=1000
+tracker_project_name='marigold_transparency'
+checkpointing_steps=157
+tracking_service='wandb'
+checkpoint='latest'
 
 CUDA_VISIBLE_DEVICES=0,1 accelerate launch --mixed_precision="fp16"  --multi_gpu depth2image_trainer.py \
                   --pretrained_model_name_or_path $pretrained_model_name_or_path \
@@ -33,7 +35,9 @@ CUDA_VISIBLE_DEVICES=0,1 accelerate launch --mixed_precision="fp16"  --multi_gpu
                   --tracker_project_name $tracker_project_name \
                   --gradient_checkpointing \
                   --checkpointing_steps $checkpointing_steps \
-                #   --enable_xformers_memory_efficient_attention \
+                  --enable_xformers_memory_efficient_attention \
+                  --report_to $tracking_service\
+                  --resume_from_checkpoint $checkpoint\
 
 }
 

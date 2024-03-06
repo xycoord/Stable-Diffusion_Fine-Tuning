@@ -393,14 +393,17 @@ def main():
             accelerator=accelerator,
             weight_dtype=weight_dtype,
             scheduler=noise_scheduler,
-            epoch=0,
+            epoch=1050,
+            denoise_steps=50,
+            num_vals=20,
             val_loader = train_loader,
             input_image_path="/mnt/disks/data1/Trans10K/validation/easy/images/67.jpg")
     
-    
+
     
     # =================== Training Loop ===================
     for epoch in range(first_epoch, args.num_train_epochs):
+        break
         unet.train() 
         train_loss = 0.0
         for step, batch in enumerate(train_loader):

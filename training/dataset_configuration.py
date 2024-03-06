@@ -96,11 +96,11 @@ def prepare_dataset(data_name,
     
     return (train_loader, val_loader, test_loader),dataset_config_dict
 
-def Disparity_Normalization(disparity):
-    min_value = torch.min(disparity)
-    max_value = torch.max(disparity)
-    normalized_disparity = ((disparity -min_value)/(max_value-min_value+1e-5) - 0.5) * 2    
-    return normalized_disparity
+def Disparity_Normalization(mask):
+    clipped_mask = torch.clamp(mask, 0, 1)
+    # normalized_disparity = ((mask -min_value)/(max_value-min_value+1e-5) - 0.5) * 2    
+    normalized_mask = (clipped_mask - 0.5) *2
+    return normalized_mask
 
 def resize_max_res_tensor(input_tensor,is_disp=False,recom_resolution=768):
     assert input_tensor.shape[1]==3
@@ -109,11 +109,17 @@ def resize_max_res_tensor(input_tensor,is_disp=False,recom_resolution=768):
     downscale_factor = min(recom_resolution/original_H,
                            recom_resolution/original_W)
     
-    resized_input_tensor = F.interpolate(input_tensor,
-                                         scale_factor=downscale_factor,mode='bilinear',
-                                         align_corners=False)
-    
+   
     if is_disp:
+        resized_input_tensor = F.interpolate(input_tensor,
+                                             scale_factor=downscale_factor, 
+                                             mode='nearest')
+
         return resized_input_tensor * downscale_factor
     else:
+        resized_input_tensor = F.interpolate(input_tensor,
+                                             scale_factor=downscale_factor,
+                                             mode='bilinear',
+                                             align_corners=False)
+ 
         return resized_input_tensor

@@ -21,10 +21,11 @@ def log_validation(logger,
                    epoch,
                    val_loader,
                    input_image_path="/mnt/disks/data1/sceneflow/frames_cleanpass/flythings3d/TEST/A/0000/left/0006.png",
-                   step=0
+                   step=0,
+                   denoise_steps = 10,
+                   num_vals = 20
                    ):
     """Run a prediction on a sample input and save the result to see how training is going"""
-    denoise_steps = 10
     ensemble_size = 10
     processing_res = 768
     match_input_res = True
@@ -57,7 +58,6 @@ def log_validation(logger,
 
 
         loss_total = 0
-        num_vals = 20
 
         for val_index, batch in enumerate(val_loader):
             if val_index >= num_vals:
@@ -74,6 +74,7 @@ def log_validation(logger,
                 batch_size = batch_size,
                 color_map = color_map,
                 show_progress_bar = True,
+                denoise_steps = denoise_steps
             )
 
             depth_pred: np.ndarray = pipe_out.depth_np
@@ -88,6 +89,11 @@ def log_validation(logger,
             target_colored_hwc = chw2hwc(target_colored)
             target_img = Image.fromarray(target_colored_hwc)
 
+            input = inputs[0].cpu().numpy().astype(np.float32)
+            input = input.clip(0, 1)
+            input = (input * 255).astype(np.uint8)
+            input_hwc = chw2hwc(input)
+            input_img = Image.fromarray(input_hwc)
 
 
             loss = F.mse_loss(torch.from_numpy(depth_pred).to(targets.device), targets[0], reduction="mean")
@@ -114,12 +120,20 @@ def log_validation(logger,
                 )
             depth_colored.save(colored_save_path)
             
-            target_save_path = os.path.join(epoch_dir, f"{pred_name_base}_target.png")
+            target_save_path = os.path.join(epoch_dir, f"{rgb_name_base}_target.png")
             if os.path.exists(target_save_path):
                 logging.warning(
                     f"Existing file: '{target_save_path}' will be overwritten"
                 )
             target_img.save(target_save_path)
+
+            input_save_path = os.path.join(epoch_dir, f"{rgb_name_base}_input.png")
+            if os.path.exists(input_save_path):
+                logging.warning(
+                    f"Existing file: '{input_save_path}' will be overwritten"
+                )
+            input_img.save(input_save_path)
+
 
         accelerator.log({"valid_loss": loss_total/num_vals}, step=step)
 

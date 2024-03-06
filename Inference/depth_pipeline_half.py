@@ -70,7 +70,7 @@ class DepthEstimationPipeline(DiffusionPipeline):
     def __call__(self,
                  input_image:Image,
                  input_image_tensor: torch.Tensor = None,
-                 denosing_steps: int =10,
+                 denoise_steps: int =10,
                  ensemble_size: int =10,
                  processing_res: int = 768,
                  match_input_res:bool =True,
@@ -93,7 +93,7 @@ class DepthEstimationPipeline(DiffusionPipeline):
                 )," Value Error: `resize_output_back` is only valid with "
             
             assert processing_res >=0
-            assert denosing_steps >=1
+            assert denoise_steps >=1
             assert ensemble_size >=1
             
             # --------------- Image Processing ------------------------
@@ -150,7 +150,7 @@ class DepthEstimationPipeline(DiffusionPipeline):
             (batched_image,)= batch  # here the image is still around 0-1
             depth_pred_raw = self.single_infer(
                 input_rgb=batched_image,
-                num_inference_steps=denosing_steps,
+                num_inference_steps=denoise_steps,
                 show_pbar=show_progress_bar,
             )
             depth_pred_ls.append(depth_pred_raw.detach().clone())

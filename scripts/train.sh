@@ -10,7 +10,7 @@ trainlist='../datafiles/sceneflow/SceneFlow_With_Occ.list'
 vallist='../datafiles/sceneflow/FlyingThings3D_Test_With_Occ.list'
 output_dir='../outputs/'
 train_batch_size=4
-num_train_epochs=18
+num_train_epochs=15
 gradient_accumulation_steps=8
 learning_rate=3e-5
 lr_warmup_steps=0
@@ -18,7 +18,7 @@ dataloader_num_workers=4
 tracker_project_name='marigold_transparency'
 checkpointing_steps=157
 tracking_service='wandb'
-checkpoint='latest'
+checkpoint='checkpoint-1727'
 
 CUDA_VISIBLE_DEVICES=0,1 accelerate launch --mixed_precision="fp16"  --multi_gpu depth2image_trainer.py \
                   --pretrained_model_name_or_path $pretrained_model_name_or_path \

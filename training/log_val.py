@@ -20,7 +20,6 @@ def log_validation(logger,
                    accelerator,weight_dtype,scheduler,
                    epoch,
                    val_loader,
-                   input_image_path="/mnt/disks/data1/sceneflow/frames_cleanpass/flythings3d/TEST/A/0000/left/0006.png",
                    step=0,
                    denoise_steps = 10,
                    num_vals = 20
@@ -30,7 +29,7 @@ def log_validation(logger,
     processing_res = 768
     match_input_res = True
     batch_size = 1
-    color_map="binary"
+    color_map="gray"
     
     logger.info("Running validation ... ")
     
@@ -52,12 +51,9 @@ def log_validation(logger,
 
     # -------------------- Inference and saving --------------------
     with torch.no_grad():
-        input_image_pil = Image.open(input_image_path)
-        # target_image_pil = Image.open("/mnt/disks/data1/Trans10K/validation/easy/masks/67_mask.png")
-        # target = pil_to_tensor(target_image_pil)[0].float()/255
 
-
-        loss_total = 0
+        mse_loss_total = 0
+        iou_loss_total = 0
 
         for val_index, batch in enumerate(val_loader):
             if val_index >= num_vals:
@@ -66,8 +62,7 @@ def log_validation(logger,
 
 
             pipe_out = pipeline(
-                input_image_pil,
-                input_image_tensor = inputs[0],
+                input_image = inputs[0],
                 ensemble_size= ensemble_size,
                 processing_res = processing_res,
                 match_input_res = match_input_res,
@@ -79,6 +74,7 @@ def log_validation(logger,
 
             depth_pred: np.ndarray = pipe_out.depth_np
             depth_colored: Image.Image = pipe_out.depth_colored
+            # TODO: Log Ensembling uncertainty
 
             target = targets[0].cpu().numpy().astype(np.float32)
             target = target.clip(0, 1)
@@ -96,8 +92,18 @@ def log_validation(logger,
             input_img = Image.fromarray(input_hwc)
 
 
-            loss = F.mse_loss(torch.from_numpy(depth_pred).to(targets.device), targets[0], reduction="mean")
-            loss_total += loss
+            mse_loss = F.mse_loss(torch.from_numpy(depth_pred).to(targets.device), targets[0], reduction="mean")
+            mse_loss_total += mse_loss
+
+            intersection = torch.sum(torch.from_numpy(depth_pred).to(targets.device) * targets[0])
+            sum_pred_target = torch.from_numpy(depth_pred).to(targets.device) + targets[0]
+            union = torch.sum(torch.clip(sum_pred_target, 0, 1))
+
+            if union != 0:
+                iou_loss = intersection/union
+            else:
+                iou_loss = 0 
+            iou_loss_total += iou_loss
 
             epoch_dir = os.path.join(args.output_dir, f"{epoch}/")
             if not os.path.exists(epoch_dir):
@@ -135,7 +141,10 @@ def log_validation(logger,
             input_img.save(input_save_path)
 
 
-        accelerator.log({"valid_loss": loss_total/num_vals}, step=step)
+        accelerator.log({"valid_mse_loss": mse_loss_total/num_vals}, step=step)
+        accelerator.log({"valid_iou_loss": iou_loss_total/num_vals}, step=step)
+        logger.info(f"valid_mse_loss: {mse_loss_total/num_vals}")
+        logger.info(f"valid_iou_loss: {iou_loss_total/num_vals}")
 
         del depth_colored
         del pipeline

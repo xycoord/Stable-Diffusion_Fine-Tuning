@@ -1,9 +1,10 @@
 import math
+import numpy as np
 
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 import torch.utils.checkpoint
+from torchvision.transforms import v2
 
 import os
 import logging
@@ -17,24 +18,21 @@ from accelerate.logging import get_logger
 from accelerate.utils import set_seed
 from accelerate.state import AcceleratorState
 from accelerate.utils import ProjectConfiguration, set_seed
-import shutil
 
 import diffusers
 from diffusers import (
-    DiffusionPipeline,
     DDIMScheduler,
+    DDPMScheduler,
     UNet2DConditionModel,
     AutoencoderKL,
 )
 
 from diffusers.optimization import get_scheduler
-from diffusers.training_utils import EMAModel, compute_snr
-from diffusers.utils import check_min_version, deprecate, is_wandb_available, make_image_grid
+from diffusers.training_utils import EMAModel
+from diffusers.utils import check_min_version
 from diffusers.utils.import_utils import is_xformers_available
-from diffusers.utils.torch_utils import is_compiled_module
 
 from packaging import version
-from torchvision import transforms
 from tqdm.auto import tqdm
 from transformers import CLIPTextModel, CLIPTokenizer
 from transformers.utils import ContextManagers
@@ -44,6 +42,9 @@ from dataset_configuration import prepare_dataset,Disparity_Normalization,resize
 
 from args_parsing import parse_args
 from log_val import log_validation
+from training_utils import new_empty_prompt, encode_to_latent_space
+from checkpointing import resume_from, save_checkpoint, setup_custom_hooks 
+from noise_samplers import annealed_pyramid_noise_like, pyramid_noise_like
 
 import sys
 
@@ -55,61 +56,6 @@ check_min_version("0.26.0.dev0")
 logger = get_logger(__name__, log_level="INFO")
 
 
-
-def save_checkpoint(accelerator, args, logger, global_step):
-
-    if not accelerator.is_main_process:
-        return
-    
-    # _before_ saving state, check if this save would set us over the `checkpoints_total_limit`
-    if args.checkpoints_total_limit is not None:
-        
-        checkpoints = os.listdir(args.output_dir)
-        checkpoints = [d for d in checkpoints if d.startswith("checkpoint")]
-        checkpoints = sorted(checkpoints, key=lambda x: int(x.split("-")[1]))
-                            
-        # before we save the new checkpoint, we need to have at _most_ `checkpoints_total_limit - 1` checkpoints
-        if len(checkpoints) >= args.checkpoints_total_limit:
-            num_to_remove = len(checkpoints) - args.checkpoints_total_limit + 1
-            removing_checkpoints = checkpoints[0:num_to_remove]
-
-            logger.info(
-                f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
-            )
-            logger.info(f"removing checkpoints: {', '.join(removing_checkpoints)}")
-
-            for removing_checkpoint in removing_checkpoints:
-                removing_checkpoint = os.path.join(args.output_dir, removing_checkpoint)
-                shutil.rmtree(removing_checkpoint)
-
-    save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
-    accelerator.save_state(save_path)
-    logger.info(f"Saved state to {save_path}")
-
-
-def new_empty_prompt(tokenizer, text_encoder, weight_dtype):
-    prompt = ""
-    text_inputs =tokenizer(
-        prompt,
-        padding="do_not_pad",
-        max_length=tokenizer.model_max_length,
-        truncation=True,
-        return_tensors="pt",
-    )
-    text_input_ids = text_inputs.input_ids.to(text_encoder.device) #[1,2]
-    empty_text_embed = text_encoder(text_input_ids)[0].to(weight_dtype)
-    return empty_text_embed
-
-
-def encode_to_latent_space(vae, input_image, weight_dtype, latent_scale_factor):
-    h = vae.encoder(input_image.to(weight_dtype))
-    moments = vae.quant_conv(h)
-    mean, logvar = torch.chunk(moments, 2, dim=1)
-    latents = mean * latent_scale_factor
-    return latents
-
-
-
 def main():
     
     ''' ------------------------Configs Preparation----------------------------'''
@@ -118,9 +64,9 @@ def main():
 
     # save  the tensorboard log files
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
+    # TODO: check config 
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
-
-    # tell the gradient_accumulation_steps, mix precison, and tensorboard
+    
     accelerator = Accelerator(
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
@@ -128,14 +74,16 @@ def main():
         project_config=accelerator_project_config,
     )
 
+    # ==== Setup Logging ====
+
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO,
     )
-    logger.info(accelerator.state, main_process_only=True) # only the main process show the logs
-
+    logger.info(accelerator.state, main_process_only=True) # only show logs on the main process
+    
     # set the warning levels
     if accelerator.is_local_main_process:
         datasets.utils.logging.set_verbosity_warning()
@@ -146,19 +94,27 @@ def main():
         transformers.utils.logging.set_verbosity_error()
         diffusers.utils.logging.set_verbosity_error()
 
-    # If passed along, set the training seed now.
+
     if args.seed is not None:
         set_seed(args.seed)
 
-    # Doing I/O at the main proecss
+
     if accelerator.is_main_process:
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
     
+
+
     ''' ------------------------Non-NN Modules Definition----------------------------'''
-    noise_scheduler = DDIMScheduler.from_pretrained(args.pretrained_model_name_or_path,subfolder='scheduler')
-    tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path,subfolder='tokenizer')
-    logger.info("loading the noise scheduler and the tokenizer from {}".format(args.pretrained_model_name_or_path),main_process_only=True)
+
+    noise_scheduler = DDIMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder='scheduler')
+    # train_noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder='scheduler')
+    # val_noise_scheduler = DDIMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder='scheduler')
+    if args.prediction_type is not None:
+        noise_scheduler.register_to_config(prediction_type=args.prediction_type)
+
+    tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder='tokenizer')
+    logger.info("loading the noise scheduler and the tokenizer from {}".format(args.pretrained_model_name_or_path), main_process_only=True)
 
     def deepspeed_zero_init_disabled_context_manager():
         """
@@ -179,8 +135,10 @@ def main():
             args.pretrained_model_name_or_path,
             subfolder='text_encoder')
         unet = UNet2DConditionModel.from_pretrained(
-            args.pretrained_model_name_or_path,subfolder="unet",
-            in_channels=8, sample_size=96,
+            args.pretrained_model_name_or_path, subfolder="unet",
+            # 4 for RGB, 4 for Mask
+            in_channels=8, 
+            sample_size=96,
             low_cpu_mem_usage=False,
             ignore_mismatched_sizes=True)
 
@@ -189,17 +147,18 @@ def main():
     text_encoder.requires_grad_(False)
     unet.train() # only make the unet-trainable
     
+    ema_unet = None
     # using EMA (Exponential Moving Average)
     if args.use_ema:
+        logger.info("====== USING EMA ======")
         ema_unet = UNet2DConditionModel.from_pretrained(
             args.pretrained_model_name_or_path,subfolder="unet",
             in_channels=8, sample_size=96,
             low_cpu_mem_usage=False,
             ignore_mismatched_sizes=True)
-        ema_unet = EMAModel(ema_unet.parameters(), model_cls=UNet2DConditionModel, model_config=ema_unet.config)
-        
+        ema_unet = EMAModel(ema_unet.parameters(), model_cls=UNet2DConditionModel, model_config=ema_unet.config, device = unet.device)
 
-    # using xformers for efficient attentions.
+    # using xformers for efficient attention
     if args.enable_xformers_memory_efficient_attention: 
         if is_xformers_available():
             import xformers
@@ -214,36 +173,8 @@ def main():
 
     # `accelerate` 0.16.0 will have better support for customized saving
     if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
-        # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
-        def save_model_hook(models, weights, output_dir):
-            if accelerator.is_main_process:
-                if args.use_ema:
-                    ema_unet.save_pretrained(os.path.join(output_dir, "unet_ema"))
-                for i, model in enumerate(models):
-                    model.save_pretrained(os.path.join(output_dir, "unet"))
-                    # make sure to pop weight so that corresponding model is not saved again
-                    weights.pop()
-
-        def load_model_hook(models, input_dir):
-            if args.use_ema:
-                load_model = EMAModel.from_pretrained(os.path.join(input_dir, "unet_ema"), UNet2DConditionModel)
-                ema_unet.load_state_dict(load_model.state_dict())
-                ema_unet.to(accelerator.device)
-                del load_model
-                
-            for i in range(len(models)):
-                # pop models so that they are not loaded again
-                model = models.pop()
-                # load diffusers style into model
-                load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
-                model.register_to_config(**load_model.config)
-                model.load_state_dict(load_model.state_dict())
-                del load_model
-
-        accelerator.register_save_state_pre_hook(save_model_hook)
-        accelerator.register_load_state_pre_hook(load_model_hook)
-
-
+        setup_custom_hooks(args, accelerator, ema_unet)
+        
     # using checkpoint for saving the memories
     if args.gradient_checkpointing:
         unet.enable_gradient_checkpointing()
@@ -255,10 +186,7 @@ def main():
         )
 
     # ==== Initialize the optimizer ====
-    optimizer_cls = torch.optim.AdamW
-
-    # optimizer settings
-    optimizer = optimizer_cls(
+    optimizer = torch.optim.AdamW(
         unet.parameters(),
         lr=args.learning_rate,
         betas=(args.adam_beta1, args.adam_beta2),
@@ -276,8 +204,8 @@ def main():
             datathread=args.dataloader_num_workers,
             logger=logger)
 
-    # because the optimizer not optimized every time, so we need to calculate 
-    # how many steps it optimizes, it is usually optimized by 
+    # because the optimizer not optimized every time,
+    # we need to calculate how many steps it optimizes, it is usually optimized by 
     # Scheduler and math around the number of training steps.
     overrode_max_train_steps = False
     num_update_steps_per_epoch = math.ceil(len(train_loader) / args.gradient_accumulation_steps)
@@ -285,23 +213,19 @@ def main():
         args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
         overrode_max_train_steps = True
 
+    # Learning Rate Scheduler
     lr_scheduler = get_scheduler(
         args.lr_scheduler,
-        optimizer=optimizer,
-        num_warmup_steps=args.lr_warmup_steps * accelerator.num_processes,
-        num_training_steps=args.max_train_steps * accelerator.num_processes,
+        optimizer = optimizer,
+        num_warmup_steps = args.lr_warmup_steps * accelerator.num_processes,
+        num_training_steps = args.max_train_steps * accelerator.num_processes,
     )
 
-    # Prepare everything with our `accelerator`.
+    # Prepare everything with the accelerator
     unet, optimizer, train_loader, test_loader,lr_scheduler = accelerator.prepare(
         unet, optimizer, train_loader, test_loader,lr_scheduler
     )
-
-    # scale factor.
-    rgb_latent_scale_factor = 0.18215
-    mask_latent_scale_factor = 0.18215
-
-
+    
     # For mixed precision training we cast all non-trainable weigths (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
     weight_dtype = torch.float32
@@ -335,6 +259,8 @@ def main():
     # Here is the DDP training: actually is 4
     total_batch_size = args.train_batch_size * accelerator.num_processes * args.gradient_accumulation_steps
 
+
+
     logger.info("***** Running training *****")
     logger.info(f"  Tracking with {accelerator.log_with}")
     logger.info(f"  Project Name = {args.tracker_project_name}")
@@ -349,28 +275,12 @@ def main():
 
     # Potentially load in the weights and states from a previous save
     if args.resume_from_checkpoint:
-        if args.resume_from_checkpoint != "latest":
-            path = args.resume_from_checkpoint
-        else:
-            # Get the most recent checkpoint
-            dirs = os.listdir(args.output_dir)
-            dirs = [d for d in dirs if d.startswith("checkpoint")]
-            dirs = sorted(dirs, key=lambda x: int(x.split("-")[1]))
-            path = dirs[-1] if len(dirs) > 0 else None
-
-        if path is None:
-            accelerator.print(
-                f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
-            )
-            args.resume_from_checkpoint = None
-            initial_global_step = 0
-        else:
-            accelerator.print(f"Resuming from checkpoint {path}")
-            accelerator.load_state(os.path.join(args.output_dir, path))
-            global_step = int(path.split("-")[1])
-
-            initial_global_step = global_step
-            first_epoch = global_step // num_update_steps_per_epoch
+        initial_global_step, first_epoch, args.resume_from_checkpoint = resume_from(
+           checkpoint=args.resume_from_checkpoint,
+           output_dir=args.output_dir,
+           accelerator=accelerator,
+           update_steps_per_epoch=num_update_steps_per_epoch
+        ) 
     else:
         initial_global_step = 0
 
@@ -393,20 +303,33 @@ def main():
             accelerator=accelerator,
             weight_dtype=weight_dtype,
             scheduler=noise_scheduler,
-            epoch=1050,
-            denoise_steps=50,
-            num_vals=20,
-            val_loader = train_loader,
-            input_image_path="/mnt/disks/data1/Trans10K/validation/easy/images/67.jpg")
-    
+            epoch=2010,
+            denoise_steps=10,
+            num_vals=200,
+            val_loader = val_loader)
+        log_validation( logger,
+            vae=vae,
+            text_encoder=text_encoder,
+            tokenizer=tokenizer,
+            unet=unet,
+            args=args,
+            accelerator=accelerator,
+            weight_dtype=weight_dtype,
+            scheduler=noise_scheduler,
+            epoch=-2010,
+            denoise_steps=10,
+            num_vals=200,
+            val_loader = train_loader)
+
 
     
     # =================== Training Loop ===================
     for epoch in range(first_epoch, args.num_train_epochs):
-        break
         unet.train() 
         train_loss = 0.0
+
         for step, batch in enumerate(train_loader):
+
             with accelerator.accumulate(unet):
 
                 # load image and mask 
@@ -425,22 +348,30 @@ def main():
                 # mask normalization: [([1, 3, 432, 768])]
                 mask_resized_normalized = Disparity_Normalization(mask_resized)
 
-                # ==== convert images and masks into latent space. ====
-                rgb_latents = encode_to_latent_space(vae, image_data_resized, weight_dtype, rgb_latent_scale_factor)
-                mask_latents = encode_to_latent_space(vae, mask_resized_normalized, weight_dtype, mask_latent_scale_factor)
+                if np.random.rand() > .5 :
+                    pass
 
+                randhflip = v2.RandomHorizontalFlip(p=0.5)
+                flipped_images, flipped_masks = torch.split(randhflip(torch.cat([image_data_resized, mask_resized_normalized],dim=1)),3,dim=1)
+
+
+                # ==== convert images and masks into latent space. ====
+                rgb_latents = encode_to_latent_space(vae, flipped_images, weight_dtype)
+                mask_latents = encode_to_latent_space(vae, flipped_masks, weight_dtype)
 
                 # ==== Add noise for diffusion ====
-
-                # Sample noise that we'll add to the latents
-                noise = torch.randn_like(mask_latents) # create noise
+                
                 # here is the setting batch size, in our settings, it can be 1.0
-                bsz = mask_latents.shape[0]
+                current_batch_size = mask_latents.shape[0]
 
                 # in the Stable Diffusion, the iterations numbers is 1000 for adding the noise and denosing.
                 # Sample a random timestep for each image
-                timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (bsz,), device=mask_latents.device)
+                timesteps = torch.randint(0, noise_scheduler.config.num_train_timesteps, (current_batch_size,), device=mask_latents.device)
                 timesteps = timesteps.long()
+
+                # Sample noise that we'll add to the latents
+                noise = annealed_pyramid_noise_like(mask_latents, timesteps, total_steps=noise_scheduler.config.num_train_timesteps) # create noise
+
                 
                 # add noise to the depth lantents
                 noisy_mask_latents = noise_scheduler.add_noise(mask_latents, noise, timesteps)
@@ -452,10 +383,7 @@ def main():
 
 
                 # ==== Get the target for loss depending on the prediction type ====
-                if args.prediction_type is not None:
-                    # set prediction_type of scheduler if defined
-                    noise_scheduler.register_to_config(prediction_type=args.prediction_type)
-
+                # TODO: change training noise scheduler to DDPM
                 if noise_scheduler.config.prediction_type == "epsilon":
                     target = noise
                 elif noise_scheduler.config.prediction_type == "v_prediction":
@@ -466,6 +394,7 @@ def main():
 
                 # ==== Predict the noise residual and compute the loss. ====
                 # This is the concatenation of rgb and mask latents
+                # TODO: This is the reverse order of the latents ?
                 unet_input = torch.cat([rgb_latents, noisy_mask_latents], dim=1)  # this order is important: [1,8,H,W]
                 
                 # predict the noise residual
@@ -537,8 +466,9 @@ def main():
                 weight_dtype=weight_dtype,
                 scheduler=noise_scheduler,
                 epoch=epoch,
-                input_image_path="/mnt/disks/data1/Trans10K/validation/easy/images/67.jpg",  
                 val_loader = val_loader,
+                denoise_steps=10,
+                num_vals=50,
                 step=global_step
             )
             

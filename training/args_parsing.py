@@ -237,6 +237,7 @@ def parse_args():
         ),
     )
 
+    parser.set_defaults()
     # get the local rank
     args = parser.parse_args()
     env_local_rank = int(os.environ.get("LOCAL_RANK", -1))

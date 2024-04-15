@@ -68,7 +68,8 @@ class DepthEstimationPipeline(DiffusionPipeline):
     
     @torch.no_grad()
     def __call__(self,
-                 input_image: torch.Tensor = None,
+                 input_image:Image,
+                 input_image_tensor: torch.Tensor = None,
                  denoise_steps: int =10,
                  ensemble_size: int =10,
                  processing_res: int = 768,
@@ -82,12 +83,45 @@ class DepthEstimationPipeline(DiffusionPipeline):
         # inherit from thea Diffusion Pipeline
         device = self.device
 
-        input_size = (input_image.shape[1],input_image.shape[2])
+        if(input_image_tensor is None):
+            input_size = input_image.size
+            
+            # adjust the input resolution.
+            if not match_input_res:
+                assert (
+                    processing_res is not None                
+                )," Value Error: `resize_output_back` is only valid with "
+            
+            assert processing_res >=0
+            assert denoise_steps >=1
+            assert ensemble_size >=1
+            
+            # --------------- Image Processing ------------------------
+            # Resize image
+            if processing_res >0:
+                input_image = resize_max_res(
+                    input_image, max_edge_resolution=processing_res
+                ) # resize image: for kitti is 231, 768
+            
+            
+            # Convert the image to RGB, to 1. reomve the alpha channel.
+            input_image = input_image.convert("RGB")
+            image = np.array(input_image)
+            
 
-        rgb_norm = input_image
+            # Normalize RGB Values.
+            rgb = np.transpose(image,(2,0,1))
+            rgb_norm = rgb / 255.0
+            rgb_norm = torch.from_numpy(rgb_norm).to(self.dtype)
+        else:
+            input_size = (input_image_tensor.shape[1],input_image_tensor.shape[2])
+            rgb_norm = input_image_tensor
+
         rgb_norm = rgb_norm.to(device)
+        
         rgb_norm = rgb_norm.half()
         
+
         assert rgb_norm.min() >= 0.0 and rgb_norm.max() <= 1.0
         
         # ----------------- predicting depth -----------------
@@ -127,7 +161,6 @@ class DepthEstimationPipeline(DiffusionPipeline):
 
         # ----------------- Test-time ensembling -----------------
         if ensemble_size > 1:
-            # TODO: Check ensemble_depths
             depth_pred, pred_uncert = ensemble_depths(
                 depth_preds, **(ensemble_kwargs or {})
             )
@@ -137,7 +170,6 @@ class DepthEstimationPipeline(DiffusionPipeline):
         
         # ----------------- Post processing -----------------
         # Scale prediction to [0, 1]
-        # TODO: remove scaling, prediction is already in [0,1]? 
         min_d = torch.min(depth_pred)
         max_d = torch.max(depth_pred)
         depth_pred = (depth_pred - min_d) / (max_d - min_d)
@@ -169,7 +201,7 @@ class DepthEstimationPipeline(DiffusionPipeline):
             uncertainty=pred_uncert,
         )
         
-    # TODO: Share with training function
+    
     def __encode_empty_text(self):
         """
         Encode text embedding for empty prompt
@@ -192,6 +224,7 @@ class DepthEstimationPipeline(DiffusionPipeline):
     def single_infer(self,input_rgb:torch.Tensor,
                      num_inference_steps:int,
                      show_pbar:bool,):
+        
         
         device = input_rgb.device
         
@@ -231,11 +264,12 @@ class DepthEstimationPipeline(DiffusionPipeline):
             iterable = enumerate(timesteps)
 
         for i, t in iterable:
-            # Same order as in training
             unet_input = torch.cat(
                 [rgb_latent, depth_latent], dim=1
             )  # this order is important: [1,8,H,W]
             
+            # print(unet_input.shape)
+
             # predict the noise residual
             noise_pred = self.unet(
                 unet_input, t, encoder_hidden_states=batch_empty_text_embed

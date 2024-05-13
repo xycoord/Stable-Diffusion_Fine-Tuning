@@ -49,6 +49,11 @@ def prepare_dataset(data_name,
 
         val_transform_list = [transforms.ToTensor(),]
         val_transform = transforms.Compose(val_transform_list)
+
+        test_transform_list = [transforms.ToTensor(),]
+        test_transform = transforms.Compose(test_transform_list)
+        
+
         
         train_kwargs = {'transform': train_transform, 
                         'base_size': cfg.TRAIN.BASE_SIZE,
@@ -58,12 +63,12 @@ def prepare_dataset(data_name,
         val_kwargs = {'transform': train_transform, 
                       'base_size': cfg.TRAIN.BASE_SIZE,
                       'crop_size': cfg.TRAIN.CROP_SIZE}
-        val_dataset = get_segmentation_dataset(cfg.DATASET.NAME, split='validation', mode='val', **train_kwargs)
+        val_dataset = get_segmentation_dataset(cfg.DATASET.NAME, split='validation', mode='val', difficulty='mix', **train_kwargs)
 
-        test_kwargs = {'transform': val_transform, 
+        test_kwargs = {'transform': test_transform, 
                        'base_size': cfg.TRAIN.BASE_SIZE,
                        'crop_size': cfg.TRAIN.CROP_SIZE}
-        test_dataset = get_segmentation_dataset(cfg.DATASET.NAME, split='test', mode='testval', **test_kwargs)
+        test_dataset = get_segmentation_dataset(cfg.DATASET.NAME, split='test', mode='testval', difficulty='easy', **test_kwargs)
 
 
     img_height, img_width = train_dataset.get_img_size()
@@ -81,7 +86,7 @@ def prepare_dataset(data_name,
                             pin_memory = True)
 
     val_loader = DataLoader(val_dataset, batch_size = batch_size, \
-                            shuffle = True, num_workers = datathread, \
+                            shuffle = False, num_workers = datathread, \
                             pin_memory = True)
 
     test_loader = DataLoader(test_dataset, batch_size = test_batch, \

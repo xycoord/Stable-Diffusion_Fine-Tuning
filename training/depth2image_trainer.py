@@ -42,6 +42,7 @@ from dataset_configuration import prepare_dataset,Disparity_Normalization,resize
 
 from args_parsing import parse_args
 from log_val import log_validation
+from run_inference import run_inference
 from training_utils import new_empty_prompt, encode_to_latent_space
 from checkpointing import resume_from, save_checkpoint, setup_custom_hooks 
 from noise_samplers import annealed_pyramid_noise_like, pyramid_noise_like
@@ -57,7 +58,7 @@ logger = get_logger(__name__, log_level="INFO")
 
 
 def main():
-    
+
     ''' ------------------------Configs Preparation----------------------------'''
     # give the args parsers
     args = parse_args()
@@ -222,8 +223,8 @@ def main():
     )
 
     # Prepare everything with the accelerator
-    unet, optimizer, train_loader, test_loader,lr_scheduler = accelerator.prepare(
-        unet, optimizer, train_loader, test_loader,lr_scheduler
+    unet, optimizer, train_loader, test_loader, val_loader, lr_scheduler = accelerator.prepare(
+        unet, optimizer, train_loader, test_loader, val_loader, lr_scheduler
     )
     
     # For mixed precision training we cast all non-trainable weigths (vae, non-lora text_encoder and non-lora unet) to half-precision
@@ -235,6 +236,7 @@ def main():
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
         args.mixed_precision = accelerator.mixed_precision
+        print("Using BF16 Precision.")
 
     # Move text_encode and vae to gpu and cast to weight_dtype
     text_encoder.to(accelerator.device, dtype=weight_dtype)
@@ -270,7 +272,7 @@ def main():
     logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_batch_size}")
     logger.info(f"  Gradient Accumulation steps = {args.gradient_accumulation_steps}")
     logger.info(f"  Total optimization steps = {args.max_train_steps}")
-    global_step = 0
+
     first_epoch = 0
 
     # Potentially load in the weights and states from a previous save
@@ -284,6 +286,10 @@ def main():
     else:
         initial_global_step = 0
 
+    logger.info(f"  Learning rate = {lr_scheduler.get_last_lr()[0]}")
+
+    global_step = initial_global_step
+
     progress_bar = tqdm(
         range(0, args.max_train_steps),
         initial=initial_global_step,
@@ -294,6 +300,21 @@ def main():
     
     if accelerator.is_main_process:
         unet.eval()
+        # test_path = "/mnt/disks/data1/Masks_Test/"
+        # image_paths = [test_path + s for s in os.listdir(test_path)] 
+        # run_inference( logger,
+        #     vae=vae,
+        #     text_encoder=text_encoder,
+        #     tokenizer=tokenizer,
+        #     unet=unet,
+        #     args=args,
+        #     accelerator=accelerator,
+        #     weight_dtype=weight_dtype,
+        #     scheduler=noise_scheduler,
+        #     epoch=2,
+        #     image_paths=image_paths,
+        #     denoise_steps=100,
+        #     )
         log_validation( logger,
             vae=vae,
             text_encoder=text_encoder,
@@ -303,33 +324,33 @@ def main():
             accelerator=accelerator,
             weight_dtype=weight_dtype,
             scheduler=noise_scheduler,
-            epoch=2010,
-            denoise_steps=10,
+            epoch=1000,
+            denoise_steps=100,
             num_vals=200,
-            val_loader = val_loader)
-        log_validation( logger,
-            vae=vae,
-            text_encoder=text_encoder,
-            tokenizer=tokenizer,
-            unet=unet,
-            args=args,
-            accelerator=accelerator,
-            weight_dtype=weight_dtype,
-            scheduler=noise_scheduler,
-            epoch=-2010,
-            denoise_steps=10,
-            num_vals=200,
-            val_loader = train_loader)
+            val_loader = test_loader)
+    #     log_validation( logger,
+    #         vae=vae,
+    #         text_encoder=text_encoder,
+    #         tokenizer=tokenizer,
+    #         unet=unet,
+    #         args=args,
+    #         accelerator=accelerator,
+    #         weight_dtype=weight_dtype,
+    #         scheduler=noise_scheduler,
+    #         epoch=-2010,
+    #         denoise_steps=10,
+    #         num_vals=200,
+    #         val_loader = train_loader)
 
 
     
     # =================== Training Loop ===================
     for epoch in range(first_epoch, args.num_train_epochs):
+        break
         unet.train() 
         train_loss = 0.0
-
+    
         for step, batch in enumerate(train_loader):
-
             with accelerator.accumulate(unet):
 
                 # load image and mask 
@@ -430,6 +451,7 @@ def main():
                 progress_bar.update(1)
                 global_step += 1
                 accelerator.log({"train_loss": train_loss}, step=global_step)
+                accelerator.log({"lr": lr_scheduler.get_last_lr()[0]}, step=global_step)
                 train_loss = 0.0
                 
                 # ==== Saving the checkpoints ====

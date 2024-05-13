@@ -43,8 +43,8 @@ def ensemble_depths(input_images:torch.Tensor,
     
 
     # init guess
-    _min = np.min(input_images.reshape((n_img, -1)).cpu().numpy(), axis=1) # get the min value of each possible depth
-    _max = np.max(input_images.reshape((n_img, -1)).cpu().numpy(), axis=1) # get the max value of each possible depth
+    _min = np.min(input_images.reshape((n_img, -1)).cpu().numpy().astype(np_dtype), axis=1) # get the min value of each possible depth
+    _max = np.max(input_images.reshape((n_img, -1)).cpu().numpy().astype(np_dtype), axis=1) # get the max value of each possible depth
     s_init = 1.0 / (_max - _min).reshape((-1, 1, 1)) #(10,1,1) : re-scale'f scale
     t_init = (-1 * s_init.flatten() * _min.flatten()).reshape((-1, 1, 1)) #(10,1,1)
     

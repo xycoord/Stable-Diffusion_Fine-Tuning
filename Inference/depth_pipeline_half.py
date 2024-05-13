@@ -87,7 +87,8 @@ class DepthEstimationPipeline(DiffusionPipeline):
         rgb_norm = input_image
         rgb_norm = rgb_norm.to(device)
         rgb_norm = rgb_norm.half()
-        
+        rgb_norm = rgb_norm.clip(0.0,1.0)
+
         assert rgb_norm.min() >= 0.0 and rgb_norm.max() <= 1.0
         
         # ----------------- predicting depth -----------------

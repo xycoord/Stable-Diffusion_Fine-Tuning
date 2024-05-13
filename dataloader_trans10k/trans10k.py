@@ -23,11 +23,11 @@ class TransSegmentation(SegmentationDataset):
     BASE_DIR = 'Trans10K'
     NUM_CLASS = 3
 
-    def __init__(self, root='/mnt/disks/data1/Trans10K', split='train', mode=None, transform=None, **kwargs):
+    def __init__(self, root='/mnt/disks/data1/Trans10K', split='train', difficulty='mix', mode=None, transform=None, **kwargs):
         super(TransSegmentation, self).__init__(root, split, mode, transform, **kwargs)
         # self.root = os.path.join(root, self.BASE_DIR)
         assert os.path.exists(self.root), "Please put dataset in {SEG_ROOT}/datasets/Trans10K"
-        self.images, self.mask_paths = _get_trans10k_pairs(self.root, self.split)
+        self.images, self.mask_paths = _get_trans10k_pairs(self.root, self.split, difficulty=difficulty)
         assert (len(self.images) == len(self.mask_paths))
         if len(self.images) == 0:
             raise RuntimeError("Found 0 images in subfolders of:" + root + "\n")
@@ -66,7 +66,8 @@ class TransSegmentation(SegmentationDataset):
             img, mask = self._val_sync_transform(img, mask)
         else:
             assert self.mode == 'testval'
-            img, mask = self._img_transform(img), self._mask_transform(mask)
+            img, mask = self._val_sync_transform(img, mask)
+            # img, mask = self._img_transform(img), self._mask_transform(mask)
 
         # general resize, normalize and toTensor
         if self.transform is not None:
@@ -94,7 +95,7 @@ class TransSegmentation(SegmentationDataset):
         return ('background', 'things', 'stuff')
     
 
-def _get_trans10k_pairs(folder, split='train'):
+def _get_trans10k_pairs(folder, split='train', difficulty='mix'):
 
     def get_path_pairs(img_folder, mask_folder):
         img_paths = []
@@ -127,10 +128,17 @@ def _get_trans10k_pairs(folder, split='train'):
         hard_mask_folder = os.path.join(folder, split, 'hard', 'masks')
         easy_img_paths, easy_mask_paths = get_path_pairs(easy_img_folder, easy_mask_folder)
         hard_img_paths, hard_mask_paths = get_path_pairs(hard_img_folder, hard_mask_folder)
-        easy_img_paths.extend(hard_img_paths)
-        easy_mask_paths.extend(hard_mask_paths)
-        img_paths = easy_img_paths
-        mask_paths = easy_mask_paths
+        if difficulty == 'easy':
+            return easy_img_paths, easy_mask_paths
+        elif difficulty == 'hard':
+            return hard_img_paths, hard_mask_paths
+        else:
+            assert difficulty == 'mix'
+            easy_img_paths.extend(hard_img_paths)
+            easy_mask_paths.extend(hard_mask_paths)
+            img_paths = easy_img_paths
+            mask_paths = easy_mask_paths
+
     return img_paths, mask_paths
 
 if __name__ == '__main__':

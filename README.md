@@ -7,14 +7,14 @@ Marigold has since published their training code [here](https://github.com/prs-e
 For an updated, neater, version of this project using Stable Diffusion 3 see [v2](https://github.com/xycoord/Transparency-Estimation)
 
 
-#### Run the Inference of Monodepth estimation: 
+#### Run the Inference of Transparency Segmentation: 
 
 ```
 cd scripts
 sh inference.sh
 ``` 
 
-#### Run the Inference of Monodepth Training, Using SceneFlow as an example:
+#### Run the Training of Transparency Segmentation, Using Trans10k:
 ```
 cd scripts
 sh train.sh

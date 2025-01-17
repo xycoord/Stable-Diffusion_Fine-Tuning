@@ -1,10 +1,10 @@
-# Accelerator-Simple-Template
+# "Marigold" Transparency Segmentation v1 (SD2)
 
-This an example of training the [Marigold Depth Estimation](https://huggingface.co/spaces/toshas/marigold) using accelerator using the sceneflow dataset. Since the original training code is not open source, only the inference pipeline is released, so the performance is not guaranteed. BTW, Any other dataset is fine, just change the dataloader.  
+This is the code for part of my final year project on Transparent Object Image Segmentation using a Marigold inspired method.
 
-Reference Code: [Marigold-ETH](https://github.com/prs-eth/marigold)   
+Marigold has since published their training code [here](https://github.com/prs-eth/Marigold)
 
-Reference Paper: [Marigold: Repurposing Diffusion-Based Image Generators for Monocular Depth Estimation](https://arxiv.org/abs/2312.02145)
+For an updated, neater, version of this project using Stable Diffusion 3 see [v2](https://github.com/xycoord/Transparency-Estimation)
 
 
 #### Run the Inference of Monodepth estimation: 
